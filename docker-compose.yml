@@ -1,0 +1,64 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: xeroura_crm
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d xeroura_crm"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-changeme}@db:5432/xeroura_crm
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Sends due reminders and scheduled broadcasts every 5 minutes
+  worker:
+    build: ./backend
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-changeme}@db:5432/xeroura_crm
+      SEED_DEMO: "false"
+      SKIP_MIGRATE: "true"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - backend
+    command: sh -c "sleep 30; while true; do python manage.py send_reminders; python manage.py run_campaigns; sleep 300; done"
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend/src:/app/src
+    environment:
+      VITE_API_URL: http://localhost:8000
+    depends_on:
+      - backend
+
+  # Optional: expose the backend to Meta's webhooks during development
+  # ngrok:
+  #   image: ngrok/ngrok:latest
+  #   environment:
+  #     NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+  #   command: http backend:8000
+  #   ports:
+  #     - "4040:4040"
+
+volumes:
+  pgdata:
